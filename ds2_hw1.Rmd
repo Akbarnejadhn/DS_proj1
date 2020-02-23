@@ -1,0 +1,120 @@
+---
+title: "project1"
+author: "Hana Akbarnejad"
+date: "2/23/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+library(tidyverse)
+library(viridis)
+library(ggplot2)
+library(readr)
+library(modelr)
+library(ISLR)
+library(glmnet)
+library(caret)
+library(corrplot)
+library(plotmo)
+
+knitr::opts_chunk$set(
+	echo = TRUE,
+	warning = FALSE,
+	fig.width = 8, 
+  fig.height = 6,
+  out.width = "90%"
+)
+options(
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continuous.fill = "viridis"
+)
+scale_colour_discrete = scale_colour_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+```
+
+In this exercise, we will predict solubility of compounds using their chemical structures. We will use traing and test data, fit linear, Ridge, Lasso, and principle component regression models and discuss the results.
+
+```{r import_data, include=FALSE}
+
+train_data = read_csv("solubility_train.csv") %>% 
+  janitor::clean_names() %>% 
+  na.omit()
+
+test_data = read_csv("solubility_test.csv") %>% 
+  janitor::clean_names() %>% 
+  na.omit()
+```
+
+
+### (a)
+
+Fit a linear model using least squares on the training data and calculate the mean square error using the test data.
+
+```{r a}
+
+# fit lm model using training data
+train_lm = lm(solubility ~ ., data = train_data)
+summary(train_lm)
+
+# predict model using training model and test data
+test_pred = predict(train_lm, test_data)
+summary(test_pred)
+
+# calculating MSE using training and test models
+# mean((y_pred - y_test)^2)
+mse = mean((test_pred - test_data$solubility)^2)
+```
+
+The mean square error using the test data is `r round(mse, 3)`.
+
+### (b)
+
+In this part, we want to choose $\lambda$ by cross-validation and fit a ridge regression model on the training data and find out the test error.
+
+We first form predictor matrix, then fit a ridge regression model. We use cross validation to choose the optimal value of $\lambda$. We use $\alpha=0$ which is the ridge penalty to obtain $\lambda$ using *cv.glmnet* function.
+
+```{r cv, echo=FALSE}
+
+set.seed(2)
+
+# setting up x matrix and y
+x = model.matrix(solubility ~ ., train_data)[,-1]
+y = train_data$solubility
+
+# fit a ridge model
+ridge_model = glmnet(x, y, standardize=TRUE,
+alpha = 0,
+lambda = exp(seq(-5, 5, length=100)))
+
+coef_matrix = coef(ridge_model)  # Each column is the fit corresponding to one lambda value
+dim(coef_matrix)
+
+# Ridge CV  
+ridge_cv = cv.glmnet(
+  x, y, type.measure = "mse",
+  alpha = 0,
+  lambda = exp(seq(-5, 5, length=100))
+  )
+
+# plots 
+plot(ridge_cv)
+plot(ridge_model, xvar = "lambda", label = TRUE)
+plot_glmnet(ridge_model, xvar = "rlambda", label = 19)
+
+# Best lambda
+lambda_opt = ridge_cv$lambda.min
+
+# Ridge regression coefficients using optimal lambda
+ridge_pred = predict(ridge_model, s = lambda_opt, newx = x)
+
+# test error 
+mse_ridge = mean((ridge_pred - test_data$solubility)^2)
+```
+
+The optimum lambda chosen is `r round(lambda_opt, 3)`, and the Ridge regression MSE is `r round(mse_ridge, 3)`.
+
+### (c)
