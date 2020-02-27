@@ -19,6 +19,7 @@ library(glmnet)
 library(caret)
 library(corrplot)
 library(plotmo)
+library(pls)
 
 knitr::opts_chunk$set(
 	echo = TRUE,
@@ -56,6 +57,8 @@ Fit a linear model using least squares on the training data and calculate the me
 
 ```{r a}
 
+set.seed(1)
+
 # fit lm model using training data
 train_lm = lm(solubility ~ ., data = train_data)
 summary(train_lm)
@@ -75,46 +78,133 @@ The mean square error using the test data is `r round(mse, 3)`.
 
 In this part, we want to choose $\lambda$ by cross-validation and fit a ridge regression model on the training data and find out the test error.
 
-We first form predictor matrix, then fit a ridge regression model. We use cross validation to choose the optimal value of $\lambda$. We use $\alpha=0$ which is the ridge penalty to obtain $\lambda$ using *cv.glmnet* function.
+We first form predictor matrix, then fit a ridge regression model. We use cross validation to choose the optimal value of $\lambda$. We use $\alpha=0$ which is the ridge penalty to obtain $\lambda$ using *cv.glmnet* function. Alternatively, we can use Use *train()* function from *caret* package to fit Ridge regression:
 
 ```{r cv, echo=FALSE}
 
-set.seed(2)
+set.seed(1)
 
-# setting up x matrix and y
-x = model.matrix(solubility ~ ., train_data)[,-1]
-y = train_data$solubility
+# setting up x matrix and y for train and test data
+x_train = model.matrix(solubility ~ ., train_data)[,-1]
+y_train = train_data$solubility
 
-# fit a ridge model
-ridge_model = glmnet(x, y, standardize=TRUE,
-alpha = 0,
-lambda = exp(seq(-5, 5, length=100)))
+x_test = model.matrix(solubility ~ ., test_data)[,-1]
+y_test = test_data$solubility
 
-coef_matrix = coef(ridge_model)  # Each column is the fit corresponding to one lambda value
-dim(coef_matrix)
+# need to define a train control, reampling method specified as repeated Cv
+# turnGrid: candidates for tuning parameter
+# I chose to pre-process!
+# "train" here is resampling method and is different from the next train :)
+# I will use it every where needed!
 
-# Ridge CV  
-ridge_cv = cv.glmnet(
-  x, y, type.measure = "mse",
-  alpha = 0,
-  lambda = exp(seq(-5, 5, length=100))
-  )
+train_control = trainControl(method = "repeatedcv", number = 10, repeats = 5)
 
-# plots 
-plot(ridge_cv)
-plot(ridge_model, xvar = "lambda", label = TRUE)
-plot_glmnet(ridge_model, xvar = "rlambda", label = 19)
-
-# Best lambda
-lambda_opt = ridge_cv$lambda.min
-
-# Ridge regression coefficients using optimal lambda
-ridge_pred = predict(ridge_model, s = lambda_opt, newx = x)
-
-# test error 
-mse_ridge = mean((ridge_pred - test_data$solubility)^2)
 ```
 
-The optimum lambda chosen is `r round(lambda_opt, 3)`, and the Ridge regression MSE is `r round(mse_ridge, 3)`.
+
+**trying to do Ridge regression using caret**
+```{r ridge_caret}
+
+set.seed(1)
+
+ridge_fit = train(x_train, y_train,
+                  method = "glmnet",
+                  tuneGrid = expand.grid(alpha = 0,
+                                         lambda = exp(seq(-5, 5, length = 100))),
+            preProc = c("center", "scale"),
+            trControl = train_control)
+
+# plot the parameters over RMSE to choose the best option
+plot(ridge_fit, xTrans = function(x) log(x))
+
+# best lambda!
+ridge_lambda = ridge_fit$bestTune
+
+# summary of coefficients in Ridge regression
+coef(ridge_fit$finalModel,ridge_fit$bestTune$lambda)
+
+# MSE from Ridge
+pred_ridge_fit = predict(ridge_fit, newdata = test_data)
+
+ridge_mse = mean((pred_ridge_fit - y_test)^2)
+
+```
+
+We can see that the optimum lambda chosen is `r round(ridge_fit$bestTune, 3)`.
+
+To compute the test error, we need to predict the test data using the model we have built and then use that to compute the MSE. We can see that the test error obtained from this model is `r round(ridge_mse, 3)`.
+
 
 ### (c)
+
+In this part, we want to choose $\lambda$ by cross-validation and fit a Lasso regression model on the training data and find out the test error.
+
+```{r lasso}
+
+set.seed(1)
+# fitting lasso regression, we should set alpha as 1
+lasso_fit = train(x_train, y_train,
+                  method = "glmnet",
+                  tuneGrid = expand.grid(alpha = 1,
+                                         lambda = exp(seq(-10, 2, length = 100))),
+            preProc = c("center", "scale"),
+            trControl = train_control)
+
+# plotting
+plot(lasso_fit, xTrans = function(x) log(x))
+
+# best lambda!
+lasso_lambda = lasso_fit$bestTune
+
+# summary of coefficients in Lasso regression
+lasso_coeff = coef(lasso_fit$finalModel,lasso_fit$bestTune$lambda)
+
+# MSE from Lasso
+pred_lasso_fit = predict(lasso_fit, newdata = test_data)
+lasso_mse = mean((pred_lasso_fit - y_test)^2)
+
+# non-zero coefficients
+
+coeff_df = as.data.frame(as.matrix(lasso_coeff))
+
+nonzero_coeff = coeff_df %>% 
+  filter(coeff_df[1] != 0) %>% 
+  nrow()
+```
+
+We can see that the $\lambda =$ obtained from cross validation is `r round(lasso_lambda, 3)`, the test error is `r round(lasso_mse, 3)`, and that there are `r nonzero_coeff`.
+
+### (d)
+
+In this part, we want to choose M by cross-validation, and fit a principle component regression model on the training data. We furthur want to compute the test error:
+
+```{r pcr}
+
+set.seed(1)
+
+# fitting PCR
+pcr_fit =  train(x_train, y_train,
+                  method = "pcr",
+                  tunelength  = nrow(train_data),
+                  trControl = train_control,
+                  preProc = c("center", "scale"))
+
+trans = preProcess(x_train, method = c("center", "scale"))
+pred_pcr_fit = predict(pcr_fit$finalModel, newdata = predict(trans, x_test), 
+                       ncomp = pcr_fit$bestTune$ncomp)
+
+pcr_mse = mean((pred_pcr_fit - y_test)^2)
+
+# CV plot showing 150 as M
+ggplot(pcr_fit, highlight = TRUE) + theme_bw()
+
+# also confirmed by:
+pcr_m = pcr_fit$bestTune
+
+```
+
+We can observe that the value of M chosen by cross validation is `r pcr_m`, and the test error is `r pcr_mse`.
+
+### (e)
+
+From the test MSEs of these four models, we can see that the test MSE of linear model and PCR model are pretty high which suggests that the models do not perform well. The test MSEs of ridge and lasso model are relatively low so the models perform well using these two methods. Among all these methods, lasso model's MSE is the lowest and linear model's MSE is the highest, which suggests that lasso model is the best and linear regression model is the worst in this case.
