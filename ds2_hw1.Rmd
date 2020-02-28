@@ -1,8 +1,8 @@
 ---
-title: "project1"
+title: "Practicing Linear, Ridge, Lasso, PC Regression models"
 author: "Hana Akbarnejad"
-date: "2/23/2020"
-output: html_document
+date: "2/27/2020"
+output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
@@ -37,8 +37,6 @@ scale_fill_discrete = scale_fill_viridis_d
 theme_set(theme_minimal() + theme(legend.position = "bottom"))
 ```
 
-In this exercise, we will predict solubility of compounds using their chemical structures. We will use traing and test data, fit linear, Ridge, Lasso, and principle component regression models and discuss the results.
-
 ```{r import_data, include=FALSE}
 
 train_data = read_csv("solubility_train.csv") %>% 
@@ -50,8 +48,11 @@ test_data = read_csv("solubility_test.csv") %>%
   na.omit()
 ```
 
+In this exercise, we will predict solubility of compounds using their chemical structures. We will use traing and test data, fit linear, Ridge, Lasso, and principle component regression models and identify the best mosel that can be used for predicting solubility.
 
-```{r cv, echo=FALSE}
+After importing data and omitting the missing values, we should start by defining test and train model matrices for predictors and also define the responses in train and test data. We will later need them for our models in this exercise. I also defined a *train_control* that uses the repeated cross validation method, with 50 resamples (5 times, 10 each).
+
+```{r}
 
 set.seed(1)
 
@@ -63,7 +64,7 @@ x_test = model.matrix(solubility ~ ., test_data)[,-1]
 y_test = test_data$solubility
 
 # need to define a train control, reampling method specified as repeated Cv
-# turnGrid: candidates for tuning parameter
+# tuneGrid: candidates for tuning parameter
 # I chose to pre-process!
 # "train" here is resampling method and is different from the next train :)
 # I will use it every where needed!
@@ -75,9 +76,9 @@ train_control = trainControl(method = "repeatedcv", number = 10, repeats = 5)
 
 ### (a)
 
-Fit a linear model using least squares on the training data and calculate the mean square error using the test data.
+In the first part, we are interested in fitting a linear model using least squares on the training data and calculate the mean square error using the test data.
 
-```{r a}
+```{r lm}
 
 set.seed(1)
 
@@ -85,8 +86,6 @@ set.seed(1)
 lm_fit = train(x_train, y_train,
               method = "lm",
               trControl = train_control)
-
-summary(lm_fit)
 
 # predict model using training model and test data
 test_pred = predict(lm_fit, test_data)
@@ -97,16 +96,15 @@ summary(test_pred)
 mse = mean((test_pred - test_data$solubility)^2)
 ```
 
-The mean square error using the test data is `r round(mse, 3)`.
+After fitting a linear model and using it to predict the test data,we obtain mean square error of `r round(mse, 3)`.
 
 ### (b)
 
-In this part, we want to choose $\lambda$ by cross-validation and fit a ridge regression model on the training data and find out the test error.
+In this part, we want to choose $\lambda$ and fit a ridge regression model on the training data and find out the test error.
 
-We first form predictor matrix, then fit a ridge regression model. We use cross validation to choose the optimal value of $\lambda$. We use $\alpha=0$ which is the ridge penalty to obtain $\lambda$ using *cv.glmnet* function. Alternatively, we can use Use *train()* function from *caret* package to fit Ridge regression:
+We first fit a ridge regression model. We use cross validation to choose the optimal value of $\lambda$. We use $\alpha=0$ which is the ridge penalty to obtain $\lambda$ using *cv.glmnet* function. Alternatively, we can Use *train()* function from *caret* package to fit Ridge regression:
 
-**trying to do Ridge regression using caret**
-```{r ridge_caret}
+```{r ridge}
 
 set.seed(1)
 
@@ -124,23 +122,21 @@ plot(ridge_fit, xTrans = function(x) log(x))
 ridge_lambda = ridge_fit$bestTune
 
 # summary of coefficients in Ridge regression
-coef(ridge_fit$finalModel,ridge_fit$bestTune$lambda)
+# coef(ridge_fit$finalModel,ridge_fit$bestTune$lambda)
 
 # MSE from Ridge
 pred_ridge_fit = predict(ridge_fit, newdata = test_data)
-
 ridge_mse = mean((pred_ridge_fit - y_test)^2)
 
 ```
 
-We can see that the optimum lambda chosen is `r round(ridge_fit$bestTune, 3)`.
+Uisng Ridge regression, we can see that the optimum $\lambda$ chosen is `r round(ridge_fit$bestTune, 3)[1,2]`.
 
 To compute the test error, we need to predict the test data using the model we have built and then use that to compute the MSE. We can see that the test error obtained from this model is `r round(ridge_mse, 3)`.
 
-
 ### (c)
 
-In this part, we want to choose $\lambda$ by cross-validation and fit a Lasso regression model on the training data and find out the test error.
+In this part, we want to choose $\lambda$ by cross-validation and fit a Lasso regression model on the training data and find the test error.
 
 ```{r lasso}
 
@@ -167,7 +163,6 @@ pred_lasso_fit = predict(lasso_fit, newdata = test_data)
 lasso_mse = mean((pred_lasso_fit - y_test)^2)
 
 # non-zero coefficients
-
 coeff_df = as.data.frame(as.matrix(lasso_coeff))
 
 nonzero_coeff = coeff_df %>% 
@@ -175,7 +170,7 @@ nonzero_coeff = coeff_df %>%
   nrow()
 ```
 
-We can see that the $\lambda =$ obtained from cross validation is `r round(lasso_lambda, 3)`, the test error is `r round(lasso_mse, 3)`, and that there are `r nonzero_coeff`.
+Using the fitted Lasso model, cross validation and the plot above that depicts RMSE against tuning parameters, We can see that the $\lambda$ obtained from cross validation is `r round(lasso_lambda, 3)[1, 2]` using $\alpha = 1$, the test error is `r round(lasso_mse, 3)`, and that the number of non-zero parameters is `r nonzero_coeff`.
 
 ### (d)
 
@@ -187,14 +182,14 @@ set.seed(1)
 
 # fitting PCR
 pcr_fit = train(x_train, y_train, method = "pcr",
-                tuneGrid = data.frame(ncomp = 1:228),
-                trControl = train_control,
+                tuneGrid = data.frame(ncomp = 1:226), # it should be from 1 to the number of predictors (228), but then I get a 
+                trControl = train_control,            # wired results when I knit, so we try to omit the problematic point
                 preProc = c("center", "scale"))
 
 trans = preProcess(x_train, method = c("center", "scale"))
 
 pred_pcr = predict(pcr_fit$finalModel, newdata = predict(trans, x_test),
-ncomp = pcr_fit$bestTune$ncomp)
+                   ncomp = pcr_fit$bestTune$ncomp)
 
 pcr_mse = mean((y_test - pred_pcr)^2)
 
@@ -204,32 +199,31 @@ ggplot(pcr_fit, highlight = TRUE) + theme_bw()
 
 ```
 
-We can observe that the value of M chosen by cross validation is `r pcr_m`, and the test error is `r round(pcr_mse, 3)`.
+We can observe that using principal components regression, the value of M chosen by cross validation is `r pcr_m` which can also be observed on the plot above, and the test error is `r round(pcr_mse, 3)`.
 
 ### (e)
 
-```{r summary}
+The above analysis show that using seed 1 and on this computer(!), MSE obtained from Lasso Regression is `r round(lasso_mse, 3)`, MSE from Ridge regression is `r round(ridge_mse, 3)` and the MSE from PCR is `r round(pcr_mse, 3)`. The MSE from the linear regression is the highest among these four models with the value of `r round(mse, 3)`.
 
-round(mse, 3)
-round(ridge_mse, 3)
-round(lasso_mse, 3)
-round(pcr_mse, 3)
+The $(\alpha,\lambda)$ parameters from Ridge and Lasso were (`r round(ridge_fit$bestTune, 3)`) and (`r round(lasso_fit$bestTune, 3)`), respectively, and the M from PCR is `r pcr_m`.
 
-ridge_fit$bestTune
-lasso_fit$bestTune
-```
-
-Lasso is the best, lowest MSE?
-lambda for lasso much lower than ridge (0.004 vs 0.126)
+lambda for lasso much lower than ridge (0.004 vs 0.126).
 
 ### (f)
-
-In this section we want to select one model which is the between linear, Ridge, Lasso, and PC regressions to predict solubility:
 
 ```{r}
 
 resamp = resamples(list(pcr = pcr_fit, lasso = lasso_fit, ridge = ridge_fit, lm = lm_fit))
-summary(resamp)
+summary(resamp) # comment on rmse
+```
+
+In this section we want to select one model which is the best between linear, Ridge, Lasso, and PC regressions that can be used for predicting solubility. For this purpose, we review MSE values discissed in previous part and see that deciding between these models, Lasso offers the best model with the minimum error and that the linear regression is not complex enough to cover our datapoints in a proper way.
+
+we apply *resamples()* function on these models and look at the mean in *RMSE* results. We can see that RMSE for linear model is the higher with the value of 0.711, the second highest mean RMSE is for the PCR model with 0.707, then it is Ridge with 0.687 and finally Lasso, which has the lowest RMSE with the value of 0.678. These results confirm that Lasso is a better fit to our data compared to the other three models and is the model I would choose for analyzing this dataset to predict the solubility.
+
+Below, we can also see a parallel plot and boxplots of the methods we used that can help visualize the results we discussed.
+
+```{r rmse_plots}
 
 parallelplot(resamp, metric = "RMSE")
 bwplot(resamp, metric = "RMSE")
